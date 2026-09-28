@@ -8575,6 +8575,23 @@ export interface paths {
         patch: operations["langfuse_proxy_route_langfuse__endpoint__patch"];
         trace?: never;
     };
+    "/laya/v1/systemone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Laya Proxy Route */
+        post: operations["laya_proxy_route_laya_v1_systemone_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/lazy/warm/{name}": {
         parameters: {
             query?: never;
@@ -31536,12 +31553,12 @@ export interface components {
         JevClassifierConfig: {
             /**
              * Api Base
-             * @description TypeSafe API base, falling back to TYPESAFE_API_BASE and then https://api.typesafe.ai
+             * @description Provider API base; defaults to TYPESAFE_API_BASE or LAYA_API_BASE for the selected provider
              */
             api_base?: string | null;
             /**
              * Api Key
-             * @description TypeSafe API key, falling back to TYPESAFE_API_KEY
+             * @description Provider API key; optional for self-hosted Laya
              */
             api_key?: string | null;
             /**
@@ -31564,6 +31581,12 @@ export interface components {
              * @default jev-latest
              */
             model: string;
+            /**
+             * Provider
+             * @default typesafe
+             * @enum {string}
+             */
+            provider: "typesafe" | "laya";
             /**
              * Timeout Ms
              * @default 3000
@@ -58270,6 +58293,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    laya_proxy_route_laya_v1_systemone_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

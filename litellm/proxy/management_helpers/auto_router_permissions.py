@@ -5,7 +5,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 from typing_extensions import ReadOnly, TypedDict
 
 from litellm.models.organization import LiteLLM_OrganizationTable
@@ -33,6 +33,7 @@ from litellm.repositories.prisma_protocols import DatabaseClient
 from litellm.repositories.project_repository import ProjectRepository
 from litellm.repositories.table_repositories import TeamMembershipRepository
 from litellm.router import Router
+from litellm.router_strategy.complexity_router.config import JevClassifierConfig
 from litellm.router_utils.auto_router_model_naming import classify_strategy_router_model, strategy_router_dependencies
 from litellm.types.management_endpoints.auto_router_endpoints import RequestComplexityRouterConfig
 from litellm.types.router import Deployment, updateDeployment
@@ -71,6 +72,7 @@ class _MemberJevClassifierConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    provider: Literal["typesafe", "laya"] = "typesafe"
     model: str
     api_key: None = None
     api_base: None = None
@@ -343,7 +345,29 @@ async def authorize_member_auto_router_write(
     )
     if raw_config is None:
         raise HTTPException(status_code=400, detail="A complexity_router_config is required.")
-    config: Final = validate_member_auto_router_config(raw_config)
+    stored_config: Final = existing.litellm_params.complexity_router_config if existing is not None else None
+    stored_jev: Final = stored_config.get("jev_classifier_config") if stored_config is not None else None
+    incoming_jev: Final = raw_config.get("jev_classifier_config")
+    config: Final = validate_member_auto_router_config(
+        {
+            **raw_config,
+            "jev_classifier_config": JevClassifierConfig.inherit_provider(
+                TypeAdapter(dict[str, object]).validate_python(incoming_jev),
+                TypeAdapter(dict[str, object]).validate_python(stored_jev),
+            ),
+        }
+        if stored_config is not None
+        and stored_config.get("classifier_type") == raw_config.get("classifier_type") == "jev"
+        and isinstance(incoming_jev, Mapping)
+        and isinstance(stored_jev, Mapping)
+        else raw_config
+    )
+    if (
+        supplied_config is not None
+        and config.jev_classifier_config is not None
+        and config.jev_classifier_config.model_fields_set & frozenset({"api_key", "api_base"})
+    ):
+        raise HTTPException(status_code=403, detail="Team members cannot change classifier connections.")
     stored_default: Final = existing.litellm_params.complexity_router_default_model if existing is not None else None
     default_model: Final = (
         params.complexity_router_default_model

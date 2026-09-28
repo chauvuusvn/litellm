@@ -7119,6 +7119,82 @@ class TestTypeSafePassthroughRoute:
         )
 
 
+class TestLayaPassthroughRoute:
+    @pytest.fixture
+    def client(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+        from litellm.proxy.proxy_server import app
+
+        monkeypatch.setenv("LAYA_API_BASE", "http://laya.test/base")
+        monkeypatch.setenv("TYPESAFE_API_KEY", "never-send-typesafe-key")
+        monkeypatch.delenv("LAYA_API_KEY", raising=False)
+        monkeypatch.delenv("SERVER_ROOT_PATH", raising=False)
+        monkeypatch.setattr(litellm, "disable_aiohttp_transport", True)
+        litellm.in_memory_llm_clients_cache.flush_cache()
+        monkeypatch.setitem(app.dependency_overrides, user_api_key_auth, lambda: UserAPIKeyAuth(api_key="sk-virtual"))
+        yield TestClient(app)
+
+    @pytest.mark.parametrize("api_key", [None, "laya-provider-key"])
+    def test_laya_forwards_native_decisions_without_gateway_or_typesafe_credentials(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch, api_key: str | None
+    ) -> None:
+        if api_key is not None:
+            monkeypatch.setenv("LAYA_API_KEY", api_key)
+        body: Final = {
+            "model": "english",
+            "state": "refund",
+            "questions": {"department": {"type": "choice", "criteria": {"billing": "refunds"}}},
+        }
+        answer: Final = {"model": "laya-rl-agent", "routing": {"model": "english"}, "answers": {}}
+        with respx.mock(assert_all_called=True) as upstream:
+            route: Final = upstream.post("http://laya.test/base/v1/systemone?trace=yes").respond(200, json=answer)
+            response: Final = client.post(
+                "/laya/v1/systemone?trace=yes",
+                json=body,
+                headers={"Authorization": "Bearer sk-virtual", "x-pass-authorization": "Bearer attacker"},
+            )
+
+        assert (response.status_code, response.json()) == (200, answer)
+        sent: Final = route.calls.last.request
+        assert sent.headers.get("authorization") == (f"Bearer {api_key}" if api_key else None)
+        assert json.loads(sent.content) == body
+
+    def test_laya_missing_server_fails_without_contacting_another_provider(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("LAYA_API_BASE")
+        with respx.mock(assert_all_called=False) as upstream:
+            response: Final = client.post("/laya/v1/systemone", json={"model": "english"})
+        assert response.status_code == 503
+        assert "LAYA_API_BASE" in response.text
+        assert len(upstream.calls) == 0
+
+    def test_laya_does_not_forward_unsupported_endpoints(self, client: TestClient) -> None:
+        with respx.mock(assert_all_called=False) as upstream:
+            response: Final = client.post("/laya/v1/evaluate", json={"model": "english"})
+        assert response.status_code == 404
+        assert len(upstream.calls) == 0
+
+    @pytest.mark.parametrize("model", [None, "auto", "jev-latest"])
+    def test_laya_rejects_implicit_checkpoint_selection(self, client: TestClient, model: str | None) -> None:
+        with respx.mock(assert_all_called=False) as upstream:
+            response: Final = client.post("/laya/v1/systemone", json={"model": model})
+        assert response.status_code == 400
+        assert len(upstream.calls) == 0
+
+    @pytest.mark.parametrize(
+        "controls",
+        [{"custom_body": {"model": "multilingual", "state": "refund"}}, {"stream": True}, {"stream": "true"}],
+    )
+    def test_laya_rejects_controls_that_change_authorized_body_or_usage_accounting(
+        self, client: TestClient, controls: Mapping[str, object]
+    ) -> None:
+        with respx.mock(assert_all_called=False) as upstream:
+            route: Final = upstream.post("http://laya.test/base/v1/systemone").respond(200, json={"answers": {}})
+            response: Final = client.post("/laya/v1/systemone", json={"model": "english", **controls})
+        assert response.status_code == 400
+        assert not route.called
+
+
 class TestFalAIPassthroughRoute:
     @pytest.fixture
     def client(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:

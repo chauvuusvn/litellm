@@ -1,10 +1,12 @@
 from datetime import datetime
+from typing import Final
 from unittest.mock import MagicMock
 
 import httpx
 import pytest
 
 import litellm
+from litellm.litellm_core_utils.litellm_logging import Logging
 from litellm.proxy.pass_through_endpoints.llm_provider_handlers.typesafe_passthrough_logging_handler import (
     TypeSafePassthroughLoggingHandler,
 )
@@ -135,6 +137,46 @@ def test_success_handler_dispatches_to_typesafe_handler():
 
     assert normalized["kwargs"]["custom_llm_provider"] == "typesafe"
     assert normalized["kwargs"]["model"] == "typesafe/jev-1.13.0"
+
+
+@pytest.mark.parametrize("routing_model", ["multilingual", None])
+def test_laya_gateway_accounts_for_checkpoint_usage_and_registered_cost(
+    monkeypatch: pytest.MonkeyPatch, routing_model: str | None
+) -> None:
+    checkpoint: Final = routing_model or "english"
+    model: Final = f"laya/{checkpoint}"
+    input_rate: Final = 0.002
+    output_rate: Final = 0.005
+    monkeypatch.setitem(litellm.model_cost, model, {
+        "input_cost_per_token": input_rate, "output_cost_per_token": output_rate,
+        "litellm_provider": "laya", "mode": "evaluation",
+    })
+    start: Final = datetime.now()
+    logging_obj: Final = Logging(
+        model="english", messages=[], stream=False, call_type="pass_through_endpoint",
+        start_time=start, litellm_call_id="laya-accounting", function_id="laya-accounting", kwargs={},
+    )
+    body: Final = {
+        "model": "laya-rl-agent", "usage": {"input_tokens": 10, "output_tokens": 3},
+        **({"routing": {"model": routing_model}} if routing_model else {}),
+    }
+    normalized: Final = PassThroughEndpointLogging().normalize_llm_passthrough_logging_payload(
+        httpx_response=httpx.Response(200, request=httpx.Request("POST", "https://laya.test/v1/systemone"), json=body),
+        response_body=body, request_body={"model": "english"}, logging_obj=logging_obj,
+        url_route="https://laya.test/v1/systemone", result="{}", start_time=start,
+        end_time=datetime.now(), cache_hit=False, custom_llm_provider="laya",
+    )
+    logged: Final = normalized["kwargs"]
+    expected_cost: Final = 10 * input_rate + 3 * output_rate
+    assert (logged["model"], logged["custom_llm_provider"]) == (model, "laya")
+    assert logged["response_cost"] == pytest.approx(expected_cost)
+    assert logged["combined_usage_object"].model_dump(exclude_none=True) == {
+        "prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13,
+    }
+    assert logging_obj.model_call_details["model"] == model
+    assert logging_obj.model_call_details["response_cost"] == pytest.approx(expected_cost)
+    assert logged["standard_logging_object"]["model"] == model
+    assert logged["standard_logging_object"]["response_cost"] == pytest.approx(expected_cost)
 
 
 def test_openrouter_decisions_response_is_priced_from_request_model_registry_row():
