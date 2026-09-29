@@ -84,15 +84,21 @@ describe("autoRouterRows", () => {
   });
 
   it.each([
-    ["llm", "LLM Classifier"],
-    ["jev", "JEV Classifier"],
-  ])("labels a router using the %s classifier", (classifierType, label) => {
+    ["llm", "LLM Classifier", undefined],
+    ["jev", "Decision Model", undefined],
+    ["jev", "Decision Model", "laya"],
+  ])("labels a router using the %s classifier", (classifierType, label, provider) => {
     const row = toAutoRouterRow(
       {
         ...complexityDeployment,
         litellm_params: {
           ...complexityDeployment.litellm_params,
-          complexity_router_config: { tiers: {}, classifier_type: classifierType, adaptive: true },
+          complexity_router_config: {
+            tiers: {},
+            classifier_type: classifierType,
+            adaptive: true,
+            ...(provider && { jev_classifier_config: { provider, model: "english" } }),
+          },
         },
       },
       0,

@@ -68,6 +68,28 @@ describe("buildAutoRouterRoutingTestRequest", () => {
       expect(buildSavedJevConnectionTestRequest(config, "saved-id")).toBeUndefined();
     },
   );
+  it("sends explicit connection resets in new probes and resolves saved probes on the server", () => {
+    const config = {
+      ...CONFIG,
+      classifier_type: "jev" as const,
+      jev_classifier_config: {
+        provider: "laya" as const,
+        model: "english",
+        timeout_ms: 3000,
+        api_base: null,
+        api_key: null,
+      },
+    };
+    const request = buildAutoRouterRoutingTestRequest({ ...params, config });
+    expect(JSON.parse(JSON.stringify(request)).complexity_router_config.jev_classifier_config).toEqual(
+      config.jev_classifier_config,
+    );
+    const savedRequest = buildSavedJevConnectionTestRequest(config, "saved-laya");
+    expect(savedRequest?.saved_model_id).toBe("saved-laya");
+    expect(savedRequest?.complexity_router_config.jev_classifier_config).not.toHaveProperty("api_base");
+    expect(savedRequest?.complexity_router_config.jev_classifier_config).not.toHaveProperty("api_key");
+  });
+
   it("sends the prompt with the config being edited", () => {
     const request = buildAutoRouterRoutingTestRequest(params);
 

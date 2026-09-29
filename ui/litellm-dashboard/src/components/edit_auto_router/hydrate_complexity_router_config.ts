@@ -1,4 +1,4 @@
-import { defaultJevClassifierConfig, jevClassifierConfigSchema } from "../add_model/jev_classifier_config";
+import { defaultJevClassifierConfig, storedJevClassifierConfigSchema } from "../add_model/jev_classifier_config";
 import { capabilitySettingsSchema, fuseSettingsSchema } from "../add_model/forecast_classifier_config";
 import type { StoredComplexityRouterConfig } from "../add_model/build_complexity_router_config";
 import {
@@ -80,7 +80,7 @@ export const hydrateComplexityRouterConfig = (
     classifier_llm_config: parsedConfig.classifier_type === "jev" ? undefined : parsedConfig.classifier_llm_config,
     jev_classifier_config:
       parsedConfig.classifier_type === "jev"
-        ? jevClassifierConfigSchema.safeParse(parsedConfig.jev_classifier_config ?? {}).data ??
+        ? storedJevClassifierConfigSchema.safeParse(parsedConfig.jev_classifier_config ?? {}).data ??
           defaultJevClassifierConfig()
         : undefined,
     classifier_context_window_size:

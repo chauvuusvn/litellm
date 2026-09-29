@@ -12,6 +12,7 @@ import {
 } from "../edit_auto_router/edit_auto_router_modal";
 import { applyTierSetAction } from "./tier_set_actions";
 import { testAutoRouterRouting } from "../networking";
+import { selectAutoRouterOption } from "../../../tests/autoRouterSetup";
 import { JEV_CONNECTION_TEST_PROMPT } from "./build_auto_router_routing_test_request";
 
 vi.mock("@/app/(dashboard)/hooks/useAuthorized", () => ({
@@ -102,8 +103,8 @@ describe("JEV classifier editor", () => {
     expect(screen.getByText("Reasoning Effort")).toBeInTheDocument();
     expect(screen.getByText("Classifier Prompt")).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Use images for classification" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("radio", { name: /Jev Classifier/ }));
-    expect(screen.getByRole("radio", { name: /^Jev Classifier/ })).toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: /Decision Model uses/ }));
+    expect(screen.getByRole("radio", { name: /^Decision Model uses/ })).toBeChecked();
     expect(screen.getByLabelText("Jev Model")).toHaveValue("jev-latest");
     expect(screen.getByLabelText("Jev Instructions")).toBeEnabled();
     expect(screen.queryByLabelText("Judge model")).not.toBeInTheDocument();
@@ -117,7 +118,7 @@ describe("JEV classifier editor", () => {
     fireEvent.click(screen.getByRole("switch", { name: "Classifier circuit breaker" }));
     fireEvent.click(screen.getByRole("button", { name: "Customize tiers" }));
     fireEvent.click(screen.getByRole("button", { name: "Save and reload" }));
-    expect(screen.getByRole("radio", { name: /Jev Classifier/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /Decision Model uses/ })).toBeChecked();
     expect(screen.getByLabelText("Jev Model")).toHaveValue("jev-test");
     expect(screen.getByLabelText("Jev Timeout (ms)")).toHaveValue(4200);
     expect(screen.getByLabelText("Context Window Size")).toHaveValue("6");
@@ -138,6 +139,71 @@ describe("JEV classifier editor", () => {
         }),
       }),
     );
+  });
+
+  it("selects Laya, clears the previous connection and probes the saved checkpoint", async () => {
+    renderWithProviders(<Form />);
+    fireEvent.click(screen.getByRole("radio", { name: /Decision Model uses/ }));
+    fireEvent.click(screen.getByText("Connection settings"));
+    fireEvent.change(screen.getByLabelText("API Base"), { target: { value: "https://jev.test" } });
+    fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "old-key" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Laya (open source)" }));
+    expect(screen.getByRole("combobox", { name: "Laya Model" })).toHaveTextContent("english");
+    expect(screen.getByLabelText("API Base")).toHaveValue("");
+    expect(screen.getByLabelText("API Key")).toHaveValue("");
+    await selectAutoRouterOption("Laya Model", "multilingual");
+    fireEvent.change(screen.getByLabelText("API Base"), { target: { value: "http://laya.test:8000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Probe current config" }));
+    expect(testAutoRouterRouting).toHaveBeenLastCalledWith(
+      "token",
+      expect.objectContaining({
+        complexity_router_config: expect.objectContaining({
+          classifier_type: "jev",
+          jev_classifier_config: {
+            provider: "laya",
+            model: "multilingual",
+            timeout_ms: 3000,
+            api_base: "http://laya.test:8000",
+          },
+        }),
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save and reload" }));
+    expect(screen.getByRole("radio", { name: "Laya (open source)" })).toBeChecked();
+    expect(screen.getByRole("combobox", { name: "Laya Model" })).toHaveTextContent("multilingual");
+    expect(screen.getByLabelText("API Base")).toHaveValue("");
+    fireEvent.click(screen.getByRole("radio", { name: "TypeSafe Jev" }));
+    expect(screen.getByLabelText("Jev Model")).toHaveValue("jev-latest");
+  });
+
+  it("keeps an unsupported saved checkpoint visible until replaced", async () => {
+    const InvalidForm = () => {
+      const [value, setValue] = useState(
+        hydrateComplexityRouterConfig(
+          {
+            ...initial,
+            classifier_type: "jev",
+            jev_classifier_config: { provider: "laya", model: "unsupported-checkpoint" },
+          },
+          undefined,
+        ),
+      );
+      return <JevEditor value={value} onChange={setValue} />;
+    };
+    renderWithProviders(<InvalidForm />);
+    expect(screen.getByRole("combobox", { name: "Laya Model" })).toHaveTextContent("unsupported-checkpoint");
+    expect(screen.getByRole("combobox", { name: "Laya Model" })).toHaveAttribute("aria-invalid", "true");
+    await selectAutoRouterOption("Laya Model", "typed-decisions");
+    expect(screen.getByRole("combobox", { name: "Laya Model" })).toHaveTextContent("typed-decisions");
+    expect(screen.queryByText("Choose a supported Laya checkpoint before saving or testing")).not.toBeInTheDocument();
+  });
+
+  it("hides connection overrides from team members", () => {
+    const authorized = useAuthorized();
+    vi.mocked(useAuthorized).mockReturnValue({ ...authorized, userRole: "Internal User" });
+    renderWithProviders(<JevEditor value={{ ...initial, classifier_type: "jev" }} onChange={vi.fn()} />);
+    expect(screen.queryByText("Connection settings")).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Laya (open source)" })).toBeEnabled();
   });
 
   it("allows licensed instructions and can restore built-in instructions", () => {

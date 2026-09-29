@@ -35,7 +35,9 @@ vi.mock("../networking", () => ({
   validateAutoRouterConfig,
 }));
 
-vi.mock("@/app/(dashboard)/hooks/useAuthorized", () => ({ default: () => ({ accessToken: "sk-test" }) }));
+vi.mock("@/app/(dashboard)/hooks/useAuthorized", () => ({
+  default: () => ({ accessToken: "sk-test", userRole: "Admin", isViewOnly: false }),
+}));
 
 vi.mock("@/components/llm_calls/fetch_models", () => ({
   fetchAvailableModels: vi.fn().mockResolvedValue([{ model_group: "gpt-4o-mini" }]),
@@ -127,6 +129,84 @@ describe("EditAutoRouterModal keyword matching", () => {
       expect.objectContaining({ deployment_affinity: false }),
       "team-1",
     );
+  });
+
+  it.each([
+    { action: undefined, transport: {} },
+    { action: "Use gateway connection", transport: { api_base: null, api_key: null } },
+    { action: "Clear saved API key", transport: { api_key: null } },
+  ])("saves Laya connection intent without resending hidden credentials: $action", async ({ action, transport }) => {
+    const user = userEvent.setup();
+    renderModal({
+      modelData: {
+        ...MODEL_DATA,
+        litellm_params: {
+          ...MODEL_DATA.litellm_params,
+          complexity_router_config: {
+            ...STORED_CONFIG,
+            classifier_type: "jev",
+            jev_classifier_config: {
+              provider: "laya",
+              model: "english",
+              timeout_ms: 3000,
+              api_base: "https://laya.test",
+              api_key: "masked-key",
+            },
+          },
+        },
+      },
+    });
+    openAutoRouterAdvanced("Classification Method");
+    await user.click(screen.getByText("Connection settings"));
+    expect(screen.getByLabelText("API Base")).toHaveValue("");
+    expect(screen.getByLabelText("API Key")).toHaveValue("");
+    if (action) await user.click(screen.getByRole("button", { name: action }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save Changes" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Save Changes" }));
+    await waitFor(() => expect(modelPatchUpdateCall).toHaveBeenCalledOnce());
+    const expectedConfig = { provider: "laya", model: "english", timeout_ms: 3000, ...transport };
+    expect(savedConfig().jev_classifier_config).toEqual(expectedConfig);
+  });
+
+  it("keeps a newly entered classifier key when correcting the API base before saving", async () => {
+    const user = userEvent.setup();
+    renderModal({
+      modelData: {
+        ...MODEL_DATA,
+        litellm_params: {
+          ...MODEL_DATA.litellm_params,
+          complexity_router_config: {
+            ...STORED_CONFIG,
+            classifier_type: "jev",
+            jev_classifier_config: {
+              provider: "laya",
+              model: "english",
+              timeout_ms: 3000,
+              api_base: "https://old-laya.test",
+              api_key: "masked-saved-key",
+            },
+          },
+        },
+      },
+    });
+    openAutoRouterAdvanced("Classification Method");
+    await user.click(screen.getByText("Connection settings"));
+    expect(screen.getByLabelText("API Key")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "newly-entered-key" } });
+    fireEvent.change(screen.getByLabelText("API Base"), { target: { value: "https://new-laya.typo" } });
+    fireEvent.change(screen.getByLabelText("API Base"), { target: { value: "https://new-laya.test" } });
+    expect(screen.getByLabelText("API Key")).toHaveValue("newly-entered-key");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save Changes" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Save Changes" }));
+    await waitFor(() => expect(modelPatchUpdateCall).toHaveBeenCalledOnce());
+    const expectedConfig = {
+      provider: "laya",
+      model: "english",
+      timeout_ms: 3000,
+      api_base: "https://new-laya.test",
+      api_key: "newly-entered-key",
+    };
+    expect(savedConfig().jev_classifier_config).toEqual(expectedConfig);
   });
 
   it("renders the advanced sections the create form offers", async () => {

@@ -82,6 +82,26 @@ describe("buildUpdatedComplexityRouterConfig keyword matching", () => {
     }
   });
 
+  it("round trips the Laya provider and checkpoint without writing stored connection fields", () => {
+    const stored = {
+      classifier_type: "jev" as const,
+      tiers: FORM_VALUE.tiers,
+      jev_classifier_config: {
+        provider: "laya",
+        model: "typed-decisions",
+        timeout_ms: 6000,
+        api_base: "https://laya.test",
+        api_key: "sk-masked****",
+      },
+    };
+    const hydrated = hydrateComplexityRouterConfig(stored, undefined);
+    const saved = buildUpdatedComplexityRouterConfig(stored, hydrated);
+    expect(saved.jev_classifier_config).toEqual({ provider: "laya", model: "typed-decisions", timeout_ms: 6000 });
+    expect(hydrateComplexityRouterConfig(saved, undefined).jev_classifier_config).toEqual(
+      hydrated.jev_classifier_config,
+    );
+  });
+
   it("hydrates nullable JEV instructions without resetting the server configuration", () => {
     const stored = {
       classifier_type: "jev" as const,

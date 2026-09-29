@@ -50,7 +50,7 @@ const AutoRouterConnectionTest: React.FC<AutoRouterConnectionTestProps> = ({
           ? { status: "success" }
           : {
               status: "error",
-              error: `Jev was not reached successfully (routing cause: ${decision.cause ?? "unknown"})`,
+              error: `Decision model was not reached successfully (routing cause: ${decision.cause ?? "unknown"})`,
             },
       );
     };
@@ -91,11 +91,11 @@ const AutoRouterConnectionTest: React.FC<AutoRouterConnectionTestProps> = ({
         classifier probe includes its reasoning effort override.
       </p>
       {jevRequest && (
-        <div role="status" aria-label="Jev connection" className="rounded-lg border p-3 text-sm">
-          <strong>Jev Classifier</strong>
+        <div role="status" aria-label="Decision model connection" className="rounded-lg border p-3 text-sm">
+          <strong>Decision Model</strong>
           <p>
-            {jevResult.status === "pending" && "Testing Jev classification"}
-            {jevResult.status === "success" && "Jev classification succeeded"}
+            {jevResult.status === "pending" && "Testing decision model classification"}
+            {jevResult.status === "success" && "Decision model classification succeeded"}
             {jevResult.status === "error" && jevResult.error}
           </p>
         </div>
