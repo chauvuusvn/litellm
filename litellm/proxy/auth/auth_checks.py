@@ -32,6 +32,7 @@ from litellm.constants import (
     DEFAULT_MAX_RECURSE_DEPTH,
     EMAIL_BUDGET_ALERT_MAX_SPEND_ALERT_PERCENTAGE,
     END_USER_RESTRICTED_REGISTRY_MAX_SIZE,
+    LITELLM_PROXY_MASTER_KEY_ALIAS,
     MODEL_ACCESS_GROUP_REGISTRY_MAX_SIZE,
     REGISTRY_ERROR_NEGATIVE_CACHE_TTL,
     TAG_REGISTRY_MAX_SIZE,
@@ -1076,6 +1077,18 @@ async def common_checks(
                 llm_router=llm_router,
                 user_object=user_object,
                 key_model_aliases=key_model_aliases_for_auth_check(valid_token),
+            )
+
+    if _model and valid_token is not None and personal_key_team_model_access_applies(valid_token):
+        with tracer.trace("litellm.proxy.auth.common_checks.can_personal_key_call_model_via_teams"):
+            await can_personal_key_call_model_via_teams(
+                model=_model,
+                user_object=user_object,
+                valid_token=valid_token,
+                llm_router=llm_router,
+                prisma_client=prisma_client,
+                user_api_key_cache=user_api_key_cache,
+                proxy_logging_obj=proxy_logging_obj,
             )
 
     # 1.1 - 2.2 - 3.0.2 - 3.0.3: Project checks (blocked, model access, budget)
@@ -4993,6 +5006,25 @@ async def can_key_call_resolved_model(
                 key_model_aliases=key_model_aliases_for_auth_check(valid_token),
             )
 
+    if personal_key_team_model_access_applies(valid_token) and valid_token.user_id is not None:
+        owner: Final = await get_user_object(
+            user_id=valid_token.user_id,
+            prisma_client=prisma_client,
+            user_api_key_cache=user_api_key_cache,
+            user_id_upsert=False,
+            parent_otel_span=valid_token.parent_otel_span,
+            proxy_logging_obj=proxy_logging_obj,
+        )
+        await can_personal_key_call_model_via_teams(
+            model=model,
+            user_object=owner,
+            valid_token=valid_token,
+            llm_router=llm_router,
+            prisma_client=prisma_client,
+            user_api_key_cache=user_api_key_cache,
+            proxy_logging_obj=proxy_logging_obj,
+        )
+
     if valid_token.project_id is not None:
         project_object: Final = await get_project_object(
             project_id=valid_token.project_id,
@@ -5204,6 +5236,173 @@ async def can_user_call_model(
         key_model_aliases=key_model_aliases,
         object_type="user",
     )
+
+
+def personal_key_team_model_access_applies(valid_token: UserAPIKeyAuth | None) -> bool:
+    return (
+        bool(litellm.personal_key_model_access_from_teams)
+        and valid_token is not None
+        and valid_token.team_id is None
+        and valid_token.user_id is not None
+        and valid_token.api_key != LITELLM_PROXY_MASTER_KEY_ALIAS
+        and valid_token.user_role != LitellmUserRoles.PROXY_ADMIN
+    )
+
+
+async def _team_grants_personal_key_model(
+    model: str,
+    team_id: str,
+    valid_token: UserAPIKeyAuth,
+    llm_router: Router | None,
+    prisma_client: PrismaClient | None,
+    user_api_key_cache: UserApiKeyCache,
+    proxy_logging_obj: ProxyLogging,
+) -> bool:
+    key_model_aliases: Final = key_model_aliases_for_auth_check(valid_token)
+    try:
+        team_object: Final = await get_team_object(
+            team_id=team_id,
+            prisma_client=prisma_client,
+            user_api_key_cache=user_api_key_cache,
+            parent_otel_span=valid_token.parent_otel_span,
+            proxy_logging_obj=proxy_logging_obj,
+        )
+        if team_object.blocked is True:
+            return False
+        await can_team_access_model(
+            model=model,
+            team_object=team_object,
+            llm_router=llm_router,
+            key_model_aliases=key_model_aliases,
+            prisma_client=prisma_client,
+        )
+        await _check_team_member_model_access(
+            model=model,
+            team_object=team_object,
+            valid_token=valid_token,
+            llm_router=llm_router,
+            prisma_client=prisma_client,
+            user_api_key_cache=user_api_key_cache,
+            proxy_logging_obj=proxy_logging_obj,
+            key_model_aliases=key_model_aliases,
+        )
+    except ProxyException:
+        return False
+    except Exception as e:  # noqa: BLE001  # fail closed: a team that cannot be loaded grants nothing
+        verbose_proxy_logger.warning(
+            "Personal key team model access: team=%s lookup failed, granting nothing: %s", team_id, e
+        )
+        return False
+    return True
+
+
+async def personal_key_teams_allow_model(
+    model: str,
+    user_object: LiteLLM_UserTable,
+    valid_token: UserAPIKeyAuth,
+    llm_router: Router | None,
+    prisma_client: PrismaClient | None,
+    user_api_key_cache: UserApiKeyCache,
+    proxy_logging_obj: ProxyLogging,
+) -> bool:
+    team_ids: Final = tuple(dict.fromkeys(user_object.teams))
+    if not team_ids:
+        return False
+    grants: Final = await asyncio.gather(
+        *(
+            _team_grants_personal_key_model(
+                model=model,
+                team_id=team_id,
+                valid_token=valid_token,
+                llm_router=llm_router,
+                prisma_client=prisma_client,
+                user_api_key_cache=user_api_key_cache,
+                proxy_logging_obj=proxy_logging_obj,
+            )
+            for team_id in team_ids
+        )
+    )
+    return any(grants) if litellm.personal_key_multi_team_access == "union" else all(grants)
+
+
+async def personal_key_team_visible_models(
+    models: Sequence[str],
+    user_api_key_dict: UserAPIKeyAuth,
+    llm_router: Router | None,
+    prisma_client: PrismaClient | None,
+    user_api_key_cache: UserApiKeyCache | None,
+    proxy_logging_obj: ProxyLogging | None,
+) -> list[str]:
+    if (
+        user_api_key_dict.user_id is None
+        or prisma_client is None
+        or user_api_key_cache is None
+        or proxy_logging_obj is None
+    ):
+        return []
+    try:
+        owner: Final = await get_user_object(
+            user_id=user_api_key_dict.user_id,
+            prisma_client=prisma_client,
+            user_api_key_cache=user_api_key_cache,
+            user_id_upsert=False,
+            parent_otel_span=user_api_key_dict.parent_otel_span,
+            proxy_logging_obj=proxy_logging_obj,
+        )
+    except Exception as e:  # noqa: BLE001  # fail closed: an owner that cannot be loaded sees no models
+        verbose_proxy_logger.warning("Personal key team model listing: owner lookup failed, listing nothing: %s", e)
+        return []
+    if owner is None:
+        return []
+    allowed: Final = await asyncio.gather(
+        *(
+            personal_key_teams_allow_model(
+                model=model,
+                user_object=owner,
+                valid_token=user_api_key_dict,
+                llm_router=llm_router,
+                prisma_client=prisma_client,
+                user_api_key_cache=user_api_key_cache,
+                proxy_logging_obj=proxy_logging_obj,
+            )
+            for model in models
+        )
+    )
+    return [model for model, is_allowed in zip(models, allowed) if is_allowed]  # mutable-ok: callers expect a list
+
+
+async def can_personal_key_call_model_via_teams(
+    model: str | list[str],
+    user_object: LiteLLM_UserTable | None,
+    valid_token: UserAPIKeyAuth,
+    llm_router: Router | None,
+    prisma_client: PrismaClient | None,
+    user_api_key_cache: UserApiKeyCache,
+    proxy_logging_obj: ProxyLogging,
+) -> Literal[True]:
+    for requested_model in (model,) if isinstance(model, str) else tuple(model):
+        if user_object is None or not await personal_key_teams_allow_model(
+            model=requested_model,
+            user_object=user_object,
+            valid_token=valid_token,
+            llm_router=llm_router,
+            prisma_client=prisma_client,
+            user_api_key_cache=user_api_key_cache,
+            proxy_logging_obj=proxy_logging_obj,
+        ):
+            raise ModelAccessDeniedProxyException(
+                message=model_access_denied_client_message(model=requested_model),
+                internal_message=(
+                    f"Personal key model access is derived from the owner's teams. User={valid_token.user_id}, "
+                    f"teams={user_object.teams if user_object is not None else None}, "
+                    f"strategy={litellm.personal_key_multi_team_access}, "
+                    f"model={requested_model}"
+                ),
+                type=ProxyErrorTypes.key_model_access_denied,
+                param="model",
+                code=status.HTTP_403_FORBIDDEN,
+            )
+    return True
 
 
 def _search_tool_names_from_object_permission(
