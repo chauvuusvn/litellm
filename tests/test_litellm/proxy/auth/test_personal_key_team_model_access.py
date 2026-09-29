@@ -247,14 +247,73 @@ def test_multi_team_strategy_resets_to_union_and_rejects_unknown() -> None:
 async def test_model_listing_loads_each_team_once(monkeypatch: pytest.MonkeyPatch, teams: None) -> None:
     _enable(monkeypatch)
     loaded_team_ids: Final[list[str]] = []
-    load_team: Final = auth_checks.get_team_object
 
-    async def _counting_get_team_object(team_id: str, **kwargs: object) -> LiteLLM_TeamTableCachedObj:
+    async def _counting_get_team_object(team_id: str, **_: object) -> LiteLLM_TeamTableCachedObj:
         loaded_team_ids.append(team_id)
-        return await load_team(team_id=team_id, **kwargs)
+        return _TEAMS[team_id]
 
     monkeypatch.setattr(auth_checks, "get_team_object", _counting_get_team_object)
     owner: Final = LiteLLM_UserTable(user_id="u1", teams=["team-a", "team-b", "team-a"])
     listed: Final = await _list_models(monkeypatch, owner, UserAPIKeyAuth(token="k1", user_id="u1"))
     assert set(listed) == {"gpt-a", "gpt-b", "shared"}
     assert sorted(loaded_team_ids) == ["team-a", "team-b"]
+
+
+@pytest.mark.asyncio
+async def test_team_check_error_grants_nothing_for_that_team(monkeypatch: pytest.MonkeyPatch, teams: None) -> None:
+    _enable(monkeypatch)
+    check_team: Final = auth_checks.can_team_access_model
+
+    async def _failing_for_team_b(model: str, team_object: LiteLLM_TeamTableCachedObj, **_: object) -> bool:
+        if team_object.team_id == "team-b":
+            raise RuntimeError("access group lookup failed")
+        return await check_team(model=model, team_object=team_object, llm_router=_ROUTER)
+
+    monkeypatch.setattr(auth_checks, "can_team_access_model", _failing_for_team_b)
+    owner: Final = LiteLLM_UserTable(user_id="u1", teams=["team-a", "team-b"])
+    token: Final = UserAPIKeyAuth(token="k1", user_id="u1")
+    assert await _common_checks("gpt-a", owner, token) is True
+    with pytest.raises(ModelAccessDeniedProxyException):
+        await _common_checks("gpt-b", owner, token)
+
+
+async def _owner_lookup_fails(**_: object) -> LiteLLM_UserTable:
+    raise RuntimeError("database unavailable")
+
+
+async def _owner_missing(**_: object) -> None:
+    return None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("get_owner", [_owner_lookup_fails, _owner_missing])
+async def test_model_listing_empty_when_owner_not_loaded(
+    monkeypatch: pytest.MonkeyPatch, teams: None, get_owner: object
+) -> None:
+    _enable(monkeypatch)
+    monkeypatch.setattr(auth_checks, "get_user_object", get_owner)
+    listed: Final = await get_available_models_for_user(
+        user_api_key_dict=UserAPIKeyAuth(token="k1", user_id="u1"),
+        llm_router=_ROUTER,
+        general_settings={},
+        user_model=None,
+        prisma_client=MagicMock(),
+        proxy_logging_obj=MagicMock(),
+        user_api_key_cache=MagicMock(),
+    )
+    assert listed == []
+
+
+@pytest.mark.asyncio
+async def test_model_listing_empty_without_database(monkeypatch: pytest.MonkeyPatch, teams: None) -> None:
+    _enable(monkeypatch)
+    listed: Final = await get_available_models_for_user(
+        user_api_key_dict=UserAPIKeyAuth(token="k1", user_id="u1"),
+        llm_router=_ROUTER,
+        general_settings={},
+        user_model=None,
+        prisma_client=None,
+        proxy_logging_obj=MagicMock(),
+        user_api_key_cache=MagicMock(),
+    )
+    assert listed == []
