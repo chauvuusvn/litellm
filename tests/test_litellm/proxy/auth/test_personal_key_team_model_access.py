@@ -1,6 +1,6 @@
 from collections.abc import Iterator, Mapping
 from typing import Final
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException, Request
@@ -246,17 +246,12 @@ def test_multi_team_strategy_resets_to_union_and_rejects_unknown() -> None:
 @pytest.mark.asyncio
 async def test_model_listing_loads_each_team_once(monkeypatch: pytest.MonkeyPatch, teams: None) -> None:
     _enable(monkeypatch)
-    loaded_team_ids: Final[list[str]] = []
-
-    async def _counting_get_team_object(team_id: str, **_: object) -> LiteLLM_TeamTableCachedObj:
-        loaded_team_ids.append(team_id)
-        return _TEAMS[team_id]
-
-    monkeypatch.setattr(auth_checks, "get_team_object", _counting_get_team_object)
+    get_team: Final = AsyncMock(wraps=auth_checks.get_team_object)
+    monkeypatch.setattr(auth_checks, "get_team_object", get_team)
     owner: Final = LiteLLM_UserTable(user_id="u1", teams=["team-a", "team-b", "team-a"])
     listed: Final = await _list_models(monkeypatch, owner, UserAPIKeyAuth(token="k1", user_id="u1"))
     assert set(listed) == {"gpt-a", "gpt-b", "shared"}
-    assert sorted(loaded_team_ids) == ["team-a", "team-b"]
+    assert sorted(call.kwargs["team_id"] for call in get_team.call_args_list) == ["team-a", "team-b"]
 
 
 @pytest.mark.asyncio
