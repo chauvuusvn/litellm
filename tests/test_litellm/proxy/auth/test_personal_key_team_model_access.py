@@ -241,3 +241,20 @@ def test_multi_team_strategy_resets_to_union_and_rejects_unknown() -> None:
     )
     with pytest.raises(HTTPException):
         _validate_general_settings_ui_litellm_value("personal_key_multi_team_access", "any")
+
+
+@pytest.mark.asyncio
+async def test_model_listing_loads_each_team_once(monkeypatch: pytest.MonkeyPatch, teams: None) -> None:
+    _enable(monkeypatch)
+    loaded_team_ids: Final[list[str]] = []
+    load_team: Final = auth_checks.get_team_object
+
+    async def _counting_get_team_object(team_id: str, **kwargs: object) -> LiteLLM_TeamTableCachedObj:
+        loaded_team_ids.append(team_id)
+        return await load_team(team_id=team_id, **kwargs)
+
+    monkeypatch.setattr(auth_checks, "get_team_object", _counting_get_team_object)
+    owner: Final = LiteLLM_UserTable(user_id="u1", teams=["team-a", "team-b", "team-a"])
+    listed: Final = await _list_models(monkeypatch, owner, UserAPIKeyAuth(token="k1", user_id="u1"))
+    assert set(listed) == {"gpt-a", "gpt-b", "shared"}
+    assert sorted(loaded_team_ids) == ["team-a", "team-b"]
