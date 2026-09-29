@@ -5209,7 +5209,7 @@ async def team_member_me_update_self_budget(
     http_request: Request,
     team_id: str,
     data: TeamMemberSelfBudgetUpdateRequest,
-    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
+    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),  # noqa: B008  # FastAPI dependency injection
 ) -> TeamMemberInfoResponse:
     """
     Set or clear the caller's own personal spend cap within the team.
