@@ -17357,6 +17357,67 @@ async def test_team_member_me_get_reports_budget_source(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "self_max_budget, expected_source, expected_budget",
+    [(None, "team_default", 100.0), (40.0, "self", 40.0)],
+    ids=["member_row_without_max_uses_team_default", "self_cap_overrides_team_default"],
+)
+async def test_team_member_me_get_labels_team_default_when_member_row_has_no_max(
+    monkeypatch, self_max_budget, expected_source, expected_budget
+):
+    """A member whose own budget row lacks max_budget falls back to the team
+    default, so the source label must say team_default, not custom."""
+    from litellm.proxy.common_utils.user_api_key_cache import UserApiKeyCache
+    from litellm.proxy.management_endpoints.team_endpoints import team_member_me
+
+    team_obj = LiteLLM_TeamTable(
+        team_id="team-1",
+        metadata={"team_member_budget_id": "team-default-budget"},
+        members_with_roles=[Member(user_id="member-1", role="user")],
+    )
+    membership_row = LiteLLM_TeamMembership(
+        user_id="member-1",
+        team_id="team-1",
+        budget_id="member-own-budget",
+        self_max_budget=self_max_budget,
+        litellm_budget_table=LiteLLM_BudgetTable(budget_id="member-own-budget", max_budget=None),
+    )
+
+    cache = UserApiKeyCache()
+    await cache.async_set_cache(
+        key="team_member_default_budget:team-default-budget",
+        value=LiteLLM_BudgetTable(budget_id="team-default-budget", max_budget=100.0),
+    )
+    _wire_self_cap_route(monkeypatch, team_obj, membership_row)
+    monkeypatch.setattr("litellm.proxy.proxy_server.user_api_key_cache", cache)
+
+    with (
+        patch(  # test-quality-ok: no live DB in this unit test
+            "litellm.proxy.management_endpoints.team_endpoints.get_team_object",
+            AsyncMock(return_value=team_obj),
+        ),
+        patch(  # test-quality-ok: the membership fetch needs a live DB/cache layer this test does not have
+            "litellm.proxy.management_endpoints.team_endpoints.get_team_membership",
+            new_callable=AsyncMock,
+            return_value=membership_row,
+        ),
+        patch(  # test-quality-ok: same no-live-DB convention for the user email lookup
+            "litellm.proxy.management_endpoints.team_endpoints.get_user_object",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+    ):
+        response = await team_member_me(
+            http_request=MagicMock(),
+            team_id="team-1",
+            user_api_key_dict=_member_self_cap_auth("member-1"),
+        )
+
+    assert response.effective_budget == expected_budget
+    assert response.budget_source == expected_source
+
+
+@pytest.mark.asyncio
 async def test_team_member_update_never_writes_self_max_budget(monkeypatch):
     """/team/member_update must not touch a member's self cap: no membership
     write carries self_max_budget, so a previously set cap survives."""

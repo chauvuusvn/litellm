@@ -5132,11 +5132,14 @@ def _member_effective_budget_source(
 ) -> TeamMemberEffectiveBudgetSource:
     if membership is not None and membership.self_cap_binds(admin_budget):
         return "self"
-    default_budget_id: Final = (team_table.metadata or {}).get("team_member_budget_id")
-    return _member_budget_source(
-        membership.budget_id if membership is not None else None,
-        default_budget_id if isinstance(default_budget_id, str) else None,
-    )
+    member_budget_row: Final = membership.litellm_budget_table if membership is not None else None
+    if membership is not None and member_budget_row is not None and member_budget_row.max_budget is not None:
+        default_budget_id: Final = (team_table.metadata or {}).get("team_member_budget_id")
+        return _member_budget_source(
+            membership.budget_id,
+            default_budget_id if isinstance(default_budget_id, str) else None,
+        )
+    return "team_default" if admin_budget is not None else "none"
 
 
 async def _build_team_member_info_response(
