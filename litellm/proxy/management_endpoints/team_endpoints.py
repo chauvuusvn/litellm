@@ -5274,7 +5274,7 @@ async def team_member_me_update_self_budget(
             "user_id_team_id": {
                 "user_id": caller_user_id,
                 "team_id": team_id,
-            }  # mutable-ok: same prisma where= argument
+            }
         },
         include={"litellm_budget_table": True},  # mutable-ok: prisma client requires a plain dict include= argument
     )
@@ -5305,7 +5305,7 @@ async def team_member_me_update_self_budget(
         "user_id_team_id": {
             "user_id": caller_user_id,
             "team_id": team_id,
-        }  # mutable-ok: same prisma where= argument
+        }
     }
     if membership_row is not None or new_self_max_budget is not None:
         await _team_membership_db(prisma_client).upsert(
