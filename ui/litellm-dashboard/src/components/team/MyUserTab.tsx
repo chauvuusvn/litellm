@@ -39,7 +39,15 @@ const BUDGET_SOURCE_LABELS: Record<NonNullable<TeamMemberInfo["budget_source"]>,
   none: "None",
 };
 
-function MyLimitEditor({ teamId, selfMaxBudget, spend }: { teamId: string; selfMaxBudget: number | null; spend: number }) {
+function MyLimitEditor({
+  teamId,
+  selfMaxBudget,
+  spend,
+}: {
+  teamId: string;
+  selfMaxBudget: number | null;
+  spend: number;
+}) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const mutation = useUpdateMySelfBudget(teamId);

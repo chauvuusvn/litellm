@@ -81,9 +81,7 @@ const updateMySelfBudget = async (teamId: string, selfMaxBudget: number | null):
   return data as TeamMemberInfo;
 };
 
-export const useUpdateMySelfBudget = (
-  teamId: string,
-): UseMutationResult<TeamMemberInfo, Error, number | null> => {
+export const useUpdateMySelfBudget = (teamId: string): UseMutationResult<TeamMemberInfo, Error, number | null> => {
   const queryClient = useQueryClient();
   return useMutation<TeamMemberInfo, Error, number | null>({
     mutationFn: (selfMaxBudget) => updateMySelfBudget(teamId, selfMaxBudget),
