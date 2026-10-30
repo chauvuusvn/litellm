@@ -48,16 +48,20 @@ def _get_stop_reason(response: AnthropicMessagesResponse) -> str | None:
 
 def _build_tool_result_message(tool_results: Sequence[Mapping[str, object]]) -> AnthropicMessagesUserMessageParam:
     """Turn executed tool results into the user message Anthropic expects."""
+    content: list[AnthropicMessagesToolResultParam] = []
+    for result in tool_results:
+        item: AnthropicMessagesToolResultParam = {
+            "type": "tool_result",
+            "tool_use_id": str(result.get("tool_call_id") or ""),
+            "content": str(result.get("result") or ""),
+        }
+        if result.get("is_error"):
+            item["is_error"] = True
+        content.append(item)
+
     return AnthropicMessagesUserMessageParam(
         role="user",
-        content=[
-            AnthropicMessagesToolResultParam(
-                type="tool_result",
-                tool_use_id=str(result.get("tool_call_id") or ""),
-                content=str(result.get("result") or ""),
-            )
-            for result in tool_results
-        ],
+        content=content,
     )
 
 

@@ -493,6 +493,7 @@ async def test_execute_tool_calls_logs_failure_via_post_call_failure_hook(monkey
     assert len(results) == 1
     assert results[0]["tool_call_id"] == "call-err"
     assert results[0]["name"] == tool_name
+    assert results[0].get("is_error") is True
 
     post_call_failure_hook.assert_awaited_once()
     assert post_call_failure_hook.await_args is not None
@@ -652,6 +653,40 @@ async def test_execute_tool_calls_returns_proxy_result_without_logging(monkeypat
 
     assert results == [{"tool_call_id": "call-1", "result": "ok", "name": tool_name}]
     proxy_logging_obj.post_mcp_call_hook.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_marks_is_error_when_call_tool_result_is_error(monkeypatch):
+    result = CallToolResult(content=[TextContent(type="text", text="something failed")], isError=True)
+    fake_manager = types.SimpleNamespace(
+        catalog=types.SimpleNamespace(operation=nullcontext),
+        get_registry=MagicMock(return_value={}),
+        call_tool=AsyncMock(return_value=result),
+        get_mcp_server_from_tool_name=MagicMock(return_value=None),
+        get_mcp_server_by_name=MagicMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "litellm.proxy.mcp_server.mcp_server_manager.global_mcp_server_manager",
+        fake_manager,
+    )
+    handler_module = importlib.import_module("litellm.responses.mcp.litellm_proxy_mcp_handler")
+    monkeypatch.setattr(handler_module, "function_setup", lambda *_args, **_kwargs: (None, None))
+
+    tool_name = "deepwiki-read_wiki_structure"
+    results = await LiteLLM_Proxy_MCP_Handler.execute_tool_calls(
+        tool_server_map={tool_name: "deepwiki"},
+        tool_calls=[{"id": "call-err-1", "function": {"name": tool_name, "arguments": "{}"}}],
+        user_api_key_auth=None,
+    )
+
+    assert results == [
+        {
+            "tool_call_id": "call-err-1",
+            "result": "something failed",
+            "name": tool_name,
+            "is_error": True,
+        }
+    ]
 
 
 @pytest.mark.asyncio

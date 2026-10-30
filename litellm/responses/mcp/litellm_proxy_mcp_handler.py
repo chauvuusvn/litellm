@@ -57,10 +57,11 @@ ToolParam: TypeAlias = Mapping[str, object]
 SplitTools: TypeAlias = tuple[list[ToolParam], list[Any]]
 
 
-class MCPToolResult(TypedDict):
+class MCPToolResult(TypedDict, total=False):
     tool_call_id: str | None
     result: str
     name: str | None
+    is_error: bool | None
 
 
 class _AresponsesOptions(ExtraItemsTypedDict, total=False, extra_items=object):
@@ -908,13 +909,15 @@ class LiteLLM_Proxy_MCP_Handler:
 
                 # Format result for inclusion in response
                 result_text = LiteLLM_Proxy_MCP_Handler._parse_mcp_result(result)
-                tool_results.append(
-                    {
-                        "tool_call_id": tool_call_id,
-                        "result": result_text,
-                        "name": tool_name,
-                    }
-                )
+                is_error = getattr(result, "isError", None) or getattr(result, "is_error", False) or False
+                tool_result_entry: MCPToolResult = {
+                    "tool_call_id": tool_call_id,
+                    "result": result_text,
+                    "name": tool_name,
+                }
+                if is_error:
+                    tool_result_entry["is_error"] = True
+                tool_results.append(tool_result_entry)
 
             except BlockedPiiEntityError as e:
                 await LiteLLM_Proxy_MCP_Handler._log_mcp_tool_failure(
@@ -930,6 +933,7 @@ class LiteLLM_Proxy_MCP_Handler:
                         "tool_call_id": tool_call_id,
                         "result": error_message,
                         "name": tool_name,
+                        "is_error": True,
                     }
                 )
             except GuardrailRaisedException as e:
@@ -948,6 +952,7 @@ class LiteLLM_Proxy_MCP_Handler:
                         "tool_call_id": tool_call_id,
                         "result": error_message,
                         "name": tool_name,
+                        "is_error": True,
                     }
                 )
             except HTTPException as e:
@@ -964,6 +969,7 @@ class LiteLLM_Proxy_MCP_Handler:
                         "tool_call_id": tool_call_id,
                         "result": error_message,
                         "name": tool_name,
+                        "is_error": True,
                     }
                 )
             except Exception as e:
@@ -979,6 +985,7 @@ class LiteLLM_Proxy_MCP_Handler:
                         "tool_call_id": tool_call_id,
                         "result": f"Error executing tool: {e}",
                         "name": tool_name,
+                        "is_error": True,
                     }
                 )
 

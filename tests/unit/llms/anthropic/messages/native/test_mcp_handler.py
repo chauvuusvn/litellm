@@ -121,6 +121,26 @@ def test_build_tool_result_message_uses_anthropic_tool_result_blocks():
     assert message["content"] == [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "9 sections"}]
 
 
+def test_build_tool_result_message_preserves_is_error():
+    """
+    When tool execution fails, is_error=True must be preserved in Anthropic tool_result block.
+    """
+    message = _build_tool_result_message(
+        [
+            {"tool_call_id": "toolu_err", "result": "Tool call failed: 404", "name": "fetch", "is_error": True},
+            {"tool_call_id": "toolu_ok", "result": "success", "name": "echo", "is_error": False},
+            {"tool_call_id": "toolu_default", "result": "success2", "name": "echo"},
+        ]
+    )
+
+    assert message["role"] == "user"
+    assert message["content"] == [
+        {"type": "tool_result", "tool_use_id": "toolu_err", "content": "Tool call failed: 404", "is_error": True},
+        {"type": "tool_result", "tool_use_id": "toolu_ok", "content": "success"},
+        {"type": "tool_result", "tool_use_id": "toolu_default", "content": "success2"},
+    ]
+
+
 def test_build_tool_result_message_survives_the_chat_completions_bridge():
     """
     Regression test (LIT-8474): a non-Anthropic model behind /v1/messages must see
