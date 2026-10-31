@@ -1,12 +1,12 @@
 import traceback
 from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping, Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Final, Literal, Optional, TypeAlias, TypedDict, overload
+from typing import TYPE_CHECKING, Any, Final, Literal, Optional, TypeAlias, overload
 
 from openai.types.chat import ChatCompletionToolParam
 from openai.types.responses.function_tool_param import FunctionToolParam
+from typing_extensions import NotRequired, TypedDict, Unpack
 from typing_extensions import TypedDict as ExtraItemsTypedDict
-from typing_extensions import Unpack
 
 from litellm._logging import verbose_logger
 from litellm.constants import MAXIMUM_TRACEBACK_LINES_TO_LOG
@@ -57,11 +57,11 @@ ToolParam: TypeAlias = Mapping[str, object]
 SplitTools: TypeAlias = tuple[list[ToolParam], list[Any]]
 
 
-class MCPToolResult(TypedDict, total=False):
+class MCPToolResult(TypedDict):
     tool_call_id: str | None
     result: str
     name: str | None
-    is_error: bool | None
+    is_error: NotRequired[bool]
 
 
 class _AresponsesOptions(ExtraItemsTypedDict, total=False, extra_items=object):
